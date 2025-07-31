@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-7xl">
+  <!-- Header -->
+  <div class="flex items-center justify-between gap-4 py-4 px-2 sticky top-0 z-30 bg-white/90 dark:bg-[#121212]/90 backdrop-blur-sm">
+    <div class="flex items-center gap-3">
+      <!-- SVG Logo -->
+      <svg width="32" height="32" viewBox="0 0 40 40" fill="none" class="inline-block align-middle">
+        <circle cx="20" cy="20" r="18" fill="#7c3aed"/>
+        <path d="M12 22 L20 12 L28 22" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="20" cy="24" r="2" fill="#fff"/>
+      </svg>
+      <span class="font-bold text-2xl tracking-tight text-violet-700 dark:text-violet-300">
+        Aladdin <span class="font-medium text-gray-400">002</span>
+      </span>
+    </div>
+    <div id="ticker" class="flex gap-2 text-sm font-mono px-4 py-2 rounded bg-violet-50 dark:bg-gray-800 shadow-inner min-w-[340px] max-w-xs md:min-w-[340px] md:max-w-lg overflow-x-auto whitespace-nowrap"></div>
+    <div class="flex gap-3">
+      <div class="flex items-center gap-2 px-3 py-1 rounded bg-slate-100 dark:bg-slate-800">
+        <span class="text-violet-500 text-lg">💼</span>
+        <span id="capitalAmt" class="font-semibold text-slate-800 dark:text-white">0</span>
+        <span class="text-xs text-gray-400 ml-1">USD</span>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1 rounded bg-emerald-50 dark:bg-emerald-900">
+        <span class="text-emerald-500 text-lg">📈</span>
+        <span id="plToday" class="font-semibold text-emerald-700 dark:text-emerald-200">0</span>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1 rounded bg-orange-50 dark:bg-orange-900">
+        <span class="text-orange-500 text-lg">🔄</span>
+        <span id="openTrades" class="font-semibold text-orange-700 dark:text-orange-200">0</span>
+      </div>
+      <button id="themeToggle" class="ml-2 text-2xl focus:outline-none" aria-label="Toggle theme">🌓</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mt-4">
+    <!-- Quick Controls -->
+    <section class="col-span-1 bg-slate-900 rounded-2xl p-5 shadow flex flex-col gap-4 min-w-[320px]">
+      <div class="flex items-center gap-2">
+        <span class="text-violet-400 text-xl">⚙️</span>
+        <span class="text-lg font-semibold text-white">Quick Controls</span>
+      </div>
+      <!-- Capital -->
+      <label class="block text-xs mb-1 text-slate-400" for="capRange">Capital</label>
+      <div class="flex items-center gap-2 mb-1">
+        <input id="capRange" type="range" min="100" max="10000" step="100" value="5000" class="w-full accent-violet-400" aria-label="Capital range">
+        <span id="capValue" class="text-xs w-12 text-right text-slate-300">5000</span>
+      </div>
+      <!-- Risk -->
+      <div>
+        <label class="block text-xs text-slate-400">Risk</label>
+        <div id="riskGroup" class="flex gap-1 mt-1">
+          <button class="pill" data-val="low" tabindex="0">Low</button>
+          <button class="pill selected" data-val="medium" tabindex="0">Medium</button>
+          <button class="pill" data-val="high" tabindex="0">High</button>
+        </div>
+      </div>
+      <!-- Leverage -->
+      <div>
+        <label class="block text-xs text-slate-400">Leverage</label>
+        <div id="levGroup" class="flex gap-1 mt-1">
+          <button class="pill selected" data-val="1" tabindex="0">1×</button>
+          <button class="pill" data-val="2" tabindex="0">2×</button>
+          <button class="pill" data-val="5" tabindex="0">5×</button>
+        </div>
+      </div>
+      <!-- Indicators -->
+      <div>
+        <label class="block text-xs text-slate-400">Indicators</label>
+        <div id="indicators" class="flex flex-wrap gap-1 mt-1">
+          {% for ind in ['RSI','MACD','SMA','EMA','BB','OBV','VWAP','Momentum'] %}
+          <button class="pill" data-ind="{{ ind }}" tabindex="0">{{ ind }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <!-- LLM Model -->
+      <div>
+        <label class="block text-xs text-slate-400">LLM Model</label>
+        <div class="flex gap-2">
+          <button class="pill selected flex items-center gap-1" data-val="gpt-4o" tabindex="0">🤖 O3</button>
+          <button class="pill flex items-center gap-1" data-val="gpt-3.5" tabindex="0">🤖 4.1</button>
+          <button class="pill flex items-center gap-1" data-val="off" tabindex="0">⏹️ OFF</button>
+        </div>
+      </div>
+      <button id="analyzeBtn" class="btn-primary w-full mt-2 flex items-center justify-center gap-2" tabindex="0">
+        <span class="text-violet-500 text-xl">🔎</span>
+        Analyze
+        <span id="analyzeLoader" class="ml-2 hidden">⏳</span>
+      </button>
+    </section>
+
+    <!-- Active Positions -->
+    <section class="col-span-2 bg-slate-900 rounded-2xl p-5 shadow flex flex-col gap-3 min-w-[420px]">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-orange-400 text-xl">📊</span>
+        <span class="text-lg font-semibold text-white">Active Positions</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="posTable">
+          <thead>
+            <tr class="border-b border-slate-700">
+              <th>Symbol</th><th>Qty</th><th>Avg</th><th>Value</th><th>P/L</th>
+            </tr>
+          </thead>
+          <tbody><!-- JS will populate --></tbody>
+        </table>
+        <div class="text-xs text-slate-400 mt-2" id="noPositions">No positions</div>
+      </div>
+    </section>
+
+    <!-- Trader Profile + Telegram -->
+    <section class="col-span-1 flex flex-col gap-6">
+      <div class="bg-slate-900 rounded-2xl p-5 shadow flex flex-col items-center">
+        <span class="text-sky-400 text-4xl mb-2">👤</span>
+        <div class="text-white font-bold text-lg">Trader</div>
+        <div class="text-slate-300 text-sm mt-1">Capital: <span id="capitalAmtSide">0</span> USD</div>
+        <div class="text-slate-300 text-sm">Open Trades: <span id="openTradesSide">0</span></div>
+        <div class="text-slate-300 text-sm mb-2">P/L Today: <span id="plTodaySide">0</span></div>
+      </div>
+      <div class="bg-slate-900 rounded-2xl p-4 flex items-center gap-2 shadow">
+        <span class="text-sky-400 text-2xl">✈️</span>
+        <span class="text-white text-base font-medium">Telegram Bot:</span>
+        <span id="tgStatus" class="ml-2 text-slate-300">Offline</span>
+        <span id="tgLastActive" class="ml-2 text-xs text-slate-400"></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Market Brief & Notifications -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+    <section class="bg-slate-900 rounded-2xl p-6 shadow flex flex-col gap-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-emerald-400 text-2xl">💡</span>
+        <span class="text-lg font-semibold text-white">AI Market Brief</span>
+      </div>
+      <div id="aiBrief" class="prose prose-invert max-h-72 overflow-y-auto text-slate-100 text-base"></div>
+    </section>
+    <section class="bg-slate-900 rounded-2xl p-6 shadow">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-yellow-400 text-2xl">🔔</span>
+        <span class="text-lg font-semibold text-white">Notifications</span>
+      </div>
+      <div id="notifications" class="text-sm text-slate-200">No notifications.</div>
+    </section>
+  </div>
+</div>
+{% endblock %}

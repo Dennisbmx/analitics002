@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AutoTrade{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="bg-white text-[#111] dark:bg-[#121212] dark:text-gray-200 font-[Inter,system-ui] h-full">
+<div class="min-h-screen flex flex-col">
+  <header class="flex items-center justify-between p-3 shadow-md bg-white dark:bg-gray-900">
+    <div class="flex items-center space-x-4">
+      <span class="font-bold text-lg">AutoTrade</span>
+      <div id="ticker" class="text-sm"></div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-1">
+        <img src="/static/icons/wallet.svg" class="h-5 w-5" alt="wallet">
+        <span id="capitalAmt">0</span>
+      </div>
+      <div class="flex items-center space-x-1">
+        <img src="/static/icons/trade.svg" class="h-5 w-5" alt="trades">
+        <span id="openTrades">0</span>
+      </div>
+      <div class="flex items-center space-x-1">
+        <img id="plIcon" src="/static/icons/plpos.svg" class="h-5 w-5" alt="pl">
+        <span id="plToday">0</span>
+      </div>
+      <button id="themeToggle" class="p-1 rounded">
+        <img id="iconSun" src="/static/icons/sun-outline.svg" class="h-5 w-5 hidden" alt="sun">
+        <img id="iconMoon" src="/static/icons/moon-outline.svg" class="h-5 w-5" alt="moon">
+      </button>
+    </div>
+  </header>
+  <main class="flex-1 p-4">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>
