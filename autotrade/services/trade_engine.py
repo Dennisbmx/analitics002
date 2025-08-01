@@ -1,8 +1,10 @@
-from typing import List, Dict
-from autotrade.brokers.alpaca_client import AlpacaBroker
+from typing import Dict, List
+
+from autotrade.broker.alpaca import AlpacaBroker
+
 
 class TradeEngine:
-    def __init__(self):
+    def __init__(self) -> None:
         self.broker = AlpacaBroker()
 
     def buy(self, symbol: str, qty: int):
@@ -24,5 +26,4 @@ class TradeEngine:
             return self.broker.get_prices(symbols)
         except Exception as e:
             print(f"[TradeEngine] get_prices error: {e}")
-            # Вернуть нули по всем символам при ошибке
             return {s: 0.0 for s in symbols}
