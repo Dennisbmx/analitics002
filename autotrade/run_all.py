@@ -1,13 +1,15 @@
 import os
 import threading
 from pathlib import Path
-from dotenv import load_dotenv
+
 import uvicorn
+from dotenv import load_dotenv
 
 from autotrade.api import server
 from autotrade.telegram.bot import run_bot
 
-def main():
+
+def main() -> None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     load_dotenv(env_path)
 
@@ -21,6 +23,7 @@ def main():
         print("Telegram disabled or no token provided.")
 
     uvicorn.run(server.app, host="0.0.0.0", port=8000)
+
 
 if __name__ == "__main__":
     main()
