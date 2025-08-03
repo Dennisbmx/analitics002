@@ -1,95 +1,116 @@
-# autotrade/brokers/alpaca_client.py
+from __future__ import annotations
 
-import os
-from typing import Dict, List
+import time
+from pathlib import Path
 
-try:
-    import yfinance as yf
-except ImportError:
-    yf = None
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
-try:
-    from alpaca_trade_api import REST
-except ImportError:
-    REST = None
+from autotrade.api.state import STATE
+from autotrade.broker.alpaca import AlpacaBroker
+from autotrade.llm.gpt_advisor import ask_gpt
+from autotrade.telegram import bot as tg
 
-ALPACA_API_KEY = os.getenv('ALPACA_API_KEY', '')
-ALPACA_API_SECRET = os.getenv('ALPACA_API_SECRET', '')
 
-class AlpacaBroker:
-    """Unified Alpaca + Yahoo Finance broker."""
+class TradeRequest(BaseModel):
+    symbol: str
+    qty: int
 
-    def __init__(self):
-        self.use_real = bool(ALPACA_API_KEY and ALPACA_API_SECRET and REST is not None)
-        if self.use_real:
-            self.client = REST(ALPACA_API_KEY, ALPACA_API_SECRET)
-        else:
-            self.client = None
 
-    def buy(self, symbol: str, qty: int):
-        if self.use_real:
-            try:
-                return self.client.submit_order(
-                    symbol=symbol, qty=qty, side='buy', type='market', time_in_force='gtc'
-                )
-            except Exception as e:
-                print(f"[AlpacaBroker] BUY ERROR: {e}")
-                return {"error": str(e)}
-        print(f"[MOCK] Buy {qty} {symbol}")
-        return {'symbol': symbol, 'qty': qty, 'side': 'buy', 'mock': True}
+web_dir = Path(__file__).resolve().parent.parent / "web"
+app = FastAPI()
+app.mount("/static", StaticFiles(directory=web_dir / "static"), name="static")
+templates = Jinja2Templates(directory=web_dir / "templates")
 
-    def sell(self, symbol: str, qty: int):
-        if self.use_real:
-            try:
-                return self.client.submit_order(
-                    symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc'
-                )
-            except Exception as e:
-                print(f"[AlpacaBroker] SELL ERROR: {e}")
-                return {"error": str(e)}
-        print(f"[MOCK] Sell {qty} {symbol}")
-        return {'symbol': symbol, 'qty': qty, 'side': 'sell', 'mock': True}
+broker = AlpacaBroker()
 
-    def get_last_price_yf(self, ticker_symbol: str) -> float:
-        if yf is None:
-            return 0.0
-        try:
-            ticker = yf.Ticker(ticker_symbol)
-            # Пробуем fast_info
-            fast_info = getattr(ticker, "fast_info", None)
-            if fast_info and getattr(fast_info, "last_price", None):
-                return float(fast_info["last_price"])
-            # Пробуем через историю
-            hist = ticker.history(period="5d")
-            if not hist.empty:
-                return float(hist["Close"].dropna()[-1])
-            return 0.0
-        except Exception as e:
-            print(f"[AlpacaBroker] Yahoo price error for {ticker_symbol}: {e}")
-            return 0.0
 
-    def get_prices(self, symbols: List[str]) -> Dict[str, float]:
-        prices: Dict[str, float] = {}
-        if self.use_real:
-            for sym in symbols:
-                try:
-                    trade = self.client.get_latest_trade(sym)
-                    prices[sym] = float(trade.price)
-                except Exception as e:
-                    print(f"[AlpacaBroker] Alpaca get_latest_trade error for {sym}: {e}")
-                    prices[sym] = 0.0
-        else:
-            for sym in symbols:
-                prices[sym] = self.get_last_price_yf(sym)
-        return prices
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
-    def get_balance(self) -> float:
-        if self.use_real:
-            try:
-                account = self.client.get_account()
-                return float(account.cash)
-            except Exception as e:
-                print(f"[AlpacaBroker] Error getting Alpaca balance: {e}")
-                return 0.0
-        else:
-            return 10000.0  # mock balance (offline mode)
+
+@app.get("/prices")
+async def prices(syms: str) -> dict:
+    symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
+    data = broker.get_prices(symbols)
+    if not broker.use_real:
+        return {"error": "Data unavailable"}
+    return data
+
+
+@app.get("/portfolio/profile")
+async def portfolio_profile() -> dict:
+    if broker.use_real:
+        balance = broker.get_balance()
+        positions = broker.get_positions()
+        STATE["positions"] = positions
+        profile = {
+            "capital": balance,
+            "open_trades": len(positions),
+            "pl_today": 0,
+            "nickname": "Trader",
+        }
+        STATE["profile"].update(profile)
+        return profile
+    return {"error": "Data unavailable"}
+
+
+@app.get("/portfolio/positions")
+async def portfolio_positions() -> dict:
+    if broker.use_real:
+        positions = broker.get_positions()
+        STATE["positions"] = positions
+        return positions
+    return {}
+
+
+@app.post("/trade/buy")
+async def trade_buy(req: TradeRequest) -> dict:
+    result = broker.buy(req.symbol, req.qty)
+    if result is None:
+        return {"error": "Trading unavailable"}
+    STATE["log"].append(f"BUY {req.qty} {req.symbol}")
+    return {"result": True}
+
+
+@app.post("/trade/sell")
+async def trade_sell(req: TradeRequest) -> dict:
+    result = broker.sell(req.symbol, req.qty)
+    if result is None:
+        return {"error": "Trading unavailable"}
+    STATE["log"].append(f"SELL {req.qty} {req.symbol}")
+    return {"result": True}
+
+
+@app.post("/analyze")
+async def analyze(cfg: dict) -> dict:
+    prompt = (
+        "Market analysis based on user settings:\n" f"{cfg}\nPlease provide insights."
+    )
+    summary = ask_gpt(prompt)
+    STATE["summary"] = summary
+    STATE["summary_ts"] = int(time.time())
+    return {"summary": summary}
+
+
+@app.get("/hourly_summary")
+async def hourly_summary() -> dict:
+    if time.time() - STATE.get("summary_ts", 0) > 300:
+        STATE["summary"] = ask_gpt("Give a short market update.")
+        STATE["summary_ts"] = int(time.time())
+    return {"summary": STATE.get("summary", "")}
+
+
+@app.get("/telegram_status")
+async def telegram_status() -> dict:
+    status = tg.bot is not None
+    return {"status": status, "last_active": tg.last_active}
+
+
+@app.get("/notifications")
+async def notifications() -> list[dict[str, str]]:
+    return [{"text": t} for t in STATE.get("log", [])[-20:]]

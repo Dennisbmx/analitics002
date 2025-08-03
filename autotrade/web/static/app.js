@@ -27,8 +27,15 @@ const symbols = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'GOOGL', 'AMZN', 'META', 'AMD']
 async function updateTicker() {
   try {
     const data = await fetch(`/prices?syms=${symbols.join(',')}`).then(r => r.json());
+    if (data.error) {
+      $('#ticker').textContent = data.error;
+      return;
+    }
     const parts = [];
-    for (const [s, p] of Object.entries(data)) parts.push(`${s} ${(+p).toFixed(2)}`);
+    for (const [s, p] of Object.entries(data)) {
+      const price = typeof p === 'number' ? p.toFixed(2) : 'N/A';
+      parts.push(`${s} ${price}`);
+    }
     $('#ticker').textContent = parts.join('   ');
   } catch (err) {
     $('#ticker').textContent = 'Data unavailable';
@@ -41,12 +48,18 @@ updateTicker();
 async function updateProfile() {
   try {
     const profile = await fetch('/portfolio/profile').then(r => r.json());
-    $('#capitalAmt').textContent = profile.capital ?? 0;
-    $('#capitalAmtSide').textContent = profile.capital ?? 0;
-    $('#openTrades').textContent = profile.open_trades ?? 0;
-    $('#openTradesSide').textContent = profile.open_trades ?? 0;
-    $('#plToday').textContent = profile.pl_today ?? 0;
-    $('#plTodaySide').textContent = profile.pl_today ?? 0;
+    if (profile.error) {
+      ['#capitalAmt', '#capitalAmtSide', '#openTrades', '#openTradesSide', '#plToday', '#plTodaySide'].forEach(id => {
+        $(id).textContent = 'N/A';
+      });
+    } else {
+      $('#capitalAmt').textContent = profile.capital ?? 0;
+      $('#capitalAmtSide').textContent = profile.capital ?? 0;
+      $('#openTrades').textContent = profile.open_trades ?? 0;
+      $('#openTradesSide').textContent = profile.open_trades ?? 0;
+      $('#plToday').textContent = profile.pl_today ?? 0;
+      $('#plTodaySide').textContent = profile.pl_today ?? 0;
+    }
   } catch (e) {}
   try {
     const data = await fetch('/portfolio/positions').then(r => r.json());
