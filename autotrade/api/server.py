@@ -9,6 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from autotrade.api.state import STATE
+
 from autotrade.api.state import STATE, get_profile
 from autotrade.broker.alpaca import AlpacaBroker
 from autotrade.llm.gpt_advisor import ask_gpt
@@ -34,6 +36,12 @@ async def index(request: Request):
 
 
 @app.get("/prices")
+async def prices(syms: str) -> dict:
+    symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
+    data = broker.get_prices(symbols)
+    if not broker.use_real:
+        return {"error": "Data unavailable"}
+    return data
 async def prices(syms: str) -> dict[str, float]:
     symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
     return broker.get_prices(symbols)
@@ -41,17 +49,42 @@ async def prices(syms: str) -> dict[str, float]:
 
 @app.get("/portfolio/profile")
 async def portfolio_profile() -> dict:
+    if broker.use_real:
+        balance = broker.get_balance()
+        positions = broker.get_positions()
+        STATE["positions"] = positions
+        profile = {
+            "capital": balance,
+            "open_trades": len(positions),
+            "pl_today": 0,
+            "nickname": "Trader",
+        }
+        STATE["profile"].update(profile)
+        return profile
+    return {"error": "Data unavailable"}
+
     return get_profile()
 
 
 @app.get("/portfolio/positions")
 async def portfolio_positions() -> dict:
+    if broker.use_real:
+        positions = broker.get_positions()
+        STATE["positions"] = positions
+        return positions
+    return {}
+
     return STATE.get("positions", {})
 
 
 @app.post("/trade/buy")
 async def trade_buy(req: TradeRequest) -> dict:
     result = broker.buy(req.symbol, req.qty)
+    if result is None:
+        return {"error": "Trading unavailable"}
+    STATE["log"].append(f"BUY {req.qty} {req.symbol}")
+    return {"result": True}
+
     STATE["log"].append(f"BUY {req.qty} {req.symbol}")
     return {"result": result}
 
@@ -59,6 +92,11 @@ async def trade_buy(req: TradeRequest) -> dict:
 @app.post("/trade/sell")
 async def trade_sell(req: TradeRequest) -> dict:
     result = broker.sell(req.symbol, req.qty)
+    if result is None:
+        return {"error": "Trading unavailable"}
+    STATE["log"].append(f"SELL {req.qty} {req.symbol}")
+    return {"result": True}
+
     STATE["log"].append(f"SELL {req.qty} {req.symbol}")
     return {"result": result}
 

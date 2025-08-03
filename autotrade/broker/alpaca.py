@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -13,28 +13,29 @@ ALPACA_API_SECRET = os.getenv("ALPACA_API_SECRET", "")
 BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_KEY", "")
 
-
 class AlpacaBroker:
-    """Broker abstraction: real via Alpaca or fallback to Twelve Data."""
+    """
+    Broker abstraction: uses Alpaca API if possible, falls back to Twelve Data for prices if not.
+    """
 
     def __init__(self) -> None:
         self.use_real = bool(ALPACA_API_KEY and ALPACA_API_SECRET and REST is not None)
-        if self.use_real:
-            self.client = REST(ALPACA_API_KEY, ALPACA_API_SECRET, base_url=BASE_URL)
-        else:
-            self.client = None
+        self.client = (
+            REST(ALPACA_API_KEY, ALPACA_API_SECRET, base_url=BASE_URL)
+            if self.use_real
+            else None
+        )
 
-    def get_balance(self) -> float:
+    def get_balance(self) -> Optional[float]:
         if self.use_real:
             try:
                 account = self.client.get_account()
                 return float(account.equity)
             except Exception as e:
                 print(f"[AlpacaBroker] Error fetching account equity: {e}")
-                return 0.0
-        return 10000.0
+        return None
 
-    def buy(self, symbol: str, qty: int):
+    def buy(self, symbol: str, qty: int) -> Optional[dict]:
         if self.use_real:
             try:
                 return self.client.submit_order(
@@ -47,10 +48,10 @@ class AlpacaBroker:
             except Exception as e:
                 print(f"[AlpacaBroker] Buy error: {e}")
                 return None
-        print(f"[MOCK] Buy {qty} {symbol}")
-        return {"symbol": symbol, "qty": qty, "side": "buy", "mock": True}
+        print("[AlpacaBroker] Trading unavailable (missing API keys)")
+        return None
 
-    def sell(self, symbol: str, qty: int):
+    def sell(self, symbol: str, qty: int) -> Optional[dict]:
         if self.use_real:
             try:
                 return self.client.submit_order(
@@ -63,40 +64,58 @@ class AlpacaBroker:
             except Exception as e:
                 print(f"[AlpacaBroker] Sell error: {e}")
                 return None
-        print(f"[MOCK] Sell {qty} {symbol}")
-        return {"symbol": symbol, "qty": qty, "side": "sell", "mock": True}
+        print("[AlpacaBroker] Trading unavailable (missing API keys)")
+        return None
 
-    def _get_prices_twelve(self, symbols: List[str]) -> Dict[str, float]:
-        prices: Dict[str, float] = {s: 0.0 for s in symbols}
-        if not TWELVE_DATA_KEY:
-            return prices
-        url = "https://api.twelvedata.com/price"
-        try:
-            resp = httpx.get(
-                url,
-                params={"symbol": ",".join(symbols), "apikey": TWELVE_DATA_KEY},
-                timeout=10,
-            )
-            data = resp.json()
-            if isinstance(data, dict) and "price" in data:
-                prices[symbols[0]] = float(data["price"])
-            else:
-                for sym, info in data.items():
-                    price = info.get("price")
-                    prices[sym.upper()] = float(price) if price else 0.0
-        except Exception as e:
-            print(f"[AlpacaBroker] Twelve Data price error: {e}")
-        return prices
-
-    def get_prices(self, symbols: List[str]) -> Dict[str, float]:
+    def get_positions(self) -> Dict[str, Dict[str, float]]:
+        """Return open positions keyed by symbol."""
         if self.use_real:
-            prices: Dict[str, float] = {}
+            out: Dict[str, Dict[str, float]] = {}
+            try:
+                for p in self.client.list_positions():
+                    out[p.symbol] = {
+                        "qty": float(p.qty),
+                        "avg": float(p.avg_entry_price),
+                        "value": float(p.market_value),
+                        "pl": float(p.unrealized_pl),
+                    }
+                return out
+            except Exception as e:
+                print(f"[AlpacaBroker] positions error: {e}")
+        return {}
+
+    def get_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
+        """Return prices for symbols: from Alpaca, fallback to Twelve Data if set, else None."""
+        if self.use_real:
+            prices: Dict[str, Optional[float]] = {}
             for sym in symbols:
                 try:
                     trade = self.client.get_latest_trade(sym)
                     prices[sym] = float(trade.price)
                 except Exception as e:
                     print(f"[AlpacaBroker] get_latest_trade error for {sym}: {e}")
-                    prices[sym] = 0.0
+                    prices[sym] = None
             return prices
-        return self._get_prices_twelve(symbols)
+        elif TWELVE_DATA_KEY:
+            # fallback to Twelve Data API for prices
+            prices: Dict[str, Optional[float]] = {s: None for s in symbols}
+            url = "https://api.twelvedata.com/price"
+            for symbol in symbols:
+                try:
+                    resp = httpx.get(
+                        url,
+                        params={"symbol": symbol, "apikey": TWELVE_DATA_KEY},
+                        timeout=10,
+                    )
+                    data = resp.json()
+                    if "price" in data:
+                        prices[symbol] = float(data["price"])
+                    else:
+                        prices[symbol] = None
+                except Exception as e:
+                    print(f"[AlpacaBroker] Twelve Data price error for {symbol}: {e}")
+                    prices[symbol] = None
+            return prices
+        else:
+            return {s: None for s in symbols}
+
