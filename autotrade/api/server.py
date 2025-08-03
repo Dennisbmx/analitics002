@@ -10,6 +10,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from autotrade.api.state import STATE
+
+from autotrade.api.state import STATE, get_profile
 from autotrade.broker.alpaca import AlpacaBroker
 from autotrade.llm.gpt_advisor import ask_gpt
 from autotrade.telegram import bot as tg
@@ -40,6 +42,9 @@ async def prices(syms: str) -> dict:
     if not broker.use_real:
         return {"error": "Data unavailable"}
     return data
+async def prices(syms: str) -> dict[str, float]:
+    symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
+    return broker.get_prices(symbols)
 
 
 @app.get("/portfolio/profile")
@@ -58,6 +63,8 @@ async def portfolio_profile() -> dict:
         return profile
     return {"error": "Data unavailable"}
 
+    return get_profile()
+
 
 @app.get("/portfolio/positions")
 async def portfolio_positions() -> dict:
@@ -66,6 +73,8 @@ async def portfolio_positions() -> dict:
         STATE["positions"] = positions
         return positions
     return {}
+
+    return STATE.get("positions", {})
 
 
 @app.post("/trade/buy")
@@ -76,6 +85,9 @@ async def trade_buy(req: TradeRequest) -> dict:
     STATE["log"].append(f"BUY {req.qty} {req.symbol}")
     return {"result": True}
 
+    STATE["log"].append(f"BUY {req.qty} {req.symbol}")
+    return {"result": result}
+
 
 @app.post("/trade/sell")
 async def trade_sell(req: TradeRequest) -> dict:
@@ -84,6 +96,9 @@ async def trade_sell(req: TradeRequest) -> dict:
         return {"error": "Trading unavailable"}
     STATE["log"].append(f"SELL {req.qty} {req.symbol}")
     return {"result": True}
+
+    STATE["log"].append(f"SELL {req.qty} {req.symbol}")
+    return {"result": result}
 
 
 @app.post("/analyze")
