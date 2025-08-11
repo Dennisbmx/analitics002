@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-7xl">
+  <!-- Header -->
+  <div class="flex items-center justify-between gap-4 py-4 px-2 sticky top-0 z-30 bg-white/90 dark:bg-[#121212]/90 backdrop-blur-sm">
+    <div class="flex items-center gap-3">
+      <!-- SVG Logo -->
+      <svg width="32" height="32" viewBox="0 0 40 40" fill="none" class="inline-block align-middle">
+        <circle cx="20" cy="20" r="18" fill="#7c3aed"/>
+        <path d="M12 22 L20 12 L28 22" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="20" cy="24" r="2" fill="#fff"/>
+      </svg>
+      <span class="font-bold text-2xl tracking-tight text-violet-700 dark:text-violet-300">
+        Aladdin <span class="font-medium text-gray-400">002</span>
+      </span>
+    </div>
+    <div id="ticker" class="flex gap-2 text-sm font-mono px-4 py-2 rounded bg-violet-50 dark:bg-gray-800 shadow-inner min-w-[340px] max-w-xs md:min-w-[340px] md:max-w-lg overflow-x-auto whitespace-nowrap"></div>
+    <div class="flex gap-3">
+      <div>
+      </div>
+      <div>
+      </div>
+      <div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mt-4">
+    <!-- Quick Controls -->
+    <section class="col-span-1 bg-slate-900 rounded-2xl p-6 shadow-lg flex flex-col gap-5 min-w-[320px]">
+      <div class="flex items-center gap-3 mb-1">
+        <span class="inline-flex items-center justify-center h-9 w-9 rounded-full bg-violet-800/60 text-white text-2xl">⚡</span>
+        <span class="font-bold text-xl text-violet-200 tracking-tight">Quick Controls</span>
+      </div>
+    
+      <div>
+        <label class="block text-xs font-semibold mb-1 text-violet-300" for="capRange">Capital</label>
+        <div class="flex items-center gap-2">
+          <input id="capRange" type="range" min="100" max="10000" step="100" value="5000"
+            class="w-full accent-violet-400" aria-label="Capital range">
+          <span id="capValue" class="text-xs w-14 text-center text-violet-100 font-mono">5000</span>
+        </div>
+      </div>
+    
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="block text-xs text-violet-300 font-semibold">Risk</span>
+          <span class="inline-flex items-center rounded bg-violet-600/30 px-2 py-1 text-xs font-medium text-violet-100">AI Selected</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="block text-xs text-violet-300 font-semibold">Indicators</span>
+          <span class="inline-flex items-center rounded bg-violet-600/30 px-2 py-1 text-xs font-medium text-violet-100">25+ NASDAQ (auto)</span>
+        </div>
+      </div>
+    
+      <button id="analyzeBtn"
+        class="mt-4 bg-gradient-to-r from-violet-500 to-violet-700 hover:from-violet-600 hover:to-violet-800 text-white rounded-xl font-semibold py-2 flex items-center justify-center gap-2 shadow-md transition"
+        tabindex="0">
+        <span class="text-xl">🔎</span>
+        Analyze & Open Trade
+        <span id="analyzeLoader" class="ml-2 hidden">⏳</span>
+      </button>
+    </section>
+    
+    
+
+    <!-- Active Positions -->
+<section class="col-span-2 bg-slate-900 rounded-2xl p-5 shadow flex flex-col gap-3 min-w-[420px]">
+  <div class="flex items-center gap-2 mb-2">
+    <!-- иконку можешь заменить на SVG потом -->
+    <span class="text-orange-400 text-xl">📊</span>
+    <span class="text-lg font-semibold text-white">Active Positions</span>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm text-white" id="posTable">
+      <thead>
+        <tr class="border-b border-slate-700">
+          <th class="text-left pl-2">Symbol</th>
+          <th class="text-right pr-2">Qty</th>
+          <th class="text-right pr-2">Avg</th>
+          <th class="text-right pr-2">Value</th>
+          <th class="text-right pr-2">P/L</th>
+          <th class="text-right pr-2">P/L, %</th> <!-- добавлен столбик % прибыли -->
+        </tr>
+      </thead>
+      <tbody><!-- JS will populate --></tbody>
+    </table>
+    <div class="text-xs text-slate-400 mt-2" id="noPositions">No positions</div>
+  </div>
+</section>
+
+
+    <!-- Trader Profile + Telegram -->
+    <section class="col-span-1 flex flex-col gap-6">
+      <div class="bg-slate-900 rounded-2xl p-5 shadow flex flex-col items-center">
+        <span class="text-sky-400 text-4xl mb-2">👤</span>
+        <div class="text-white font-bold text-lg">Trader</div>
+        <div class="text-slate-300 text-sm mt-1">Capital: <span id="capitalAmtSide">0</span> USD</div>
+        <div class="text-slate-300 text-sm">Open Trades: <span id="openTradesSide">0</span></div>
+        <div class="text-slate-300 text-sm mb-2">P/L Today: <span id="plTodaySide">0</span></div>
+      </div>
+      <div class="bg-slate-900 rounded-2xl p-4 flex items-center gap-2 shadow">
+        <span class="text-sky-400 text-2xl"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="12" fill="#229ED9"/>
+          <path d="M17.46 7.1c.17-.16.39-.19.59-.09.19.1.29.29.23.5l-2.08 8.34c-.07.28-.36.39-.58.27l-2.61-1.93-1.26 1.21c-.13.13-.36.07-.41-.11l-.44-1.61-1.22-1.14c-.15-.14-.1-.39.09-.45l7.08-2.36c.17-.06.26-.27.13-.43z" fill="#fff"/>
+        </svg>
+      </span>
+        <span class="text-white text-base font-medium">Telegram Bot:</span>
+        <span id="tgStatus" class="ml-2 text-slate-300">Offline</span>
+        <span id="tgLastActive" class="ml-2 text-xs text-slate-400"></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Financial Report & Notifications -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+  <!-- Financial Report Section -->
+  <section class="bg-slate-900 rounded-2xl p-6 shadow flex flex-col gap-3">
+    <div class="flex items-center gap-2 mb-2">
+      <!-- Место для SVG-иконки: можешь вставить любую! -->
+      <span class="inline-flex items-center justify-center h-8 w-8 rounded-full bg-emerald-900/80">
+        <!-- Example: ChartBar icon (замени на свою SVG если хочешь) -->
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 17v2a1 1 0 001 1h16a1 1 0 001-1v-2M9 17V9m4 8V5m4 12v-6m-8 6V9" />
+        </svg>
+      </span>
+      <span class="text-lg font-semibold text-white">Financial Report</span>
+    </div>
+    <div id="aiBrief" class="prose prose-invert max-h-72 overflow-y-auto text-base"></div>
+  </section>
+  
+  <!-- Notifications Section -->
+  <section class="bg-slate-900 rounded-2xl p-6 shadow">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-yellow-400 text-2xl">🔔</span>
+      <span class="text-lg font-semibold text-white">Notifications</span>
+    </div>
+    <div id="notifications" class="text-sm text-slate-200">No notifications.</div>
+  </section>
+</div>
+{% endblock %}
