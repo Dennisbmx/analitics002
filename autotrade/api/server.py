@@ -1,236 +1,148 @@
-# server.py
-from pathlib import Path
+from __future__ import annotations
+
+import os
 import time
-from fastapi import FastAPI, Request
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from dotenv import load_dotenv; load_dotenv()
-import os
 
-from autotrade.api.state import STATE
+# --- .env: из рабочей папки (VS Code) и из корня репо ---
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True), override=False)                       # .env из CWD
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)   # .env из корня репо
+except Exception:
+    pass
+
+# --- Пакетные импорты проекта ---
+from autotrade.api.state import (
+    STATE, append_log, set_positions, update_profile, set_summary
+)
 from autotrade.broker.alpaca import AlpacaBroker
 from autotrade.llm.gpt_advisor import ask_gpt
-from autotrade.telegram import bot as tg
 
-web_dir = Path(__file__).resolve().parent.parent / "web"
+# --- Пути строго под структуру проекта ---
+AUTOTRADE_DIR = Path(__file__).resolve().parents[1]   # .../autotrade
+WEB_ROOT = AUTOTRADE_DIR / "web"                      # .../autotrade/web
+TEMPLATES_DIR = WEB_ROOT / "templates"                # .../autotrade/web/templates
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=web_dir / "static"), name="static")
-templates = Jinja2Templates(directory=web_dir / "templates")
+
+# /static -> autotrade/web (здесь app.js, app.css, icons/)
+app.mount("/static", StaticFiles(directory=str(WEB_ROOT)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 broker = AlpacaBroker()
 
+
+# ===== Модели =====
 class TradeRequest(BaseModel):
     symbol: str
     qty: int
 
+
+# ===== Страницы =====
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    # Ожидаем dashboard.html в autotrade/web/templates/
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
+
+# ===== Маркет-данные =====
 @app.get("/prices")
-async def prices(syms: str) -> dict:
+async def prices(syms: str) -> Dict[str, Optional[float]]:
     symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
-    data = broker.get_prices(symbols)
-    if not broker.use_real:
-        return {"error": "Data unavailable"}
-    return data
+    if not symbols:
+        return {"error": "No symbols provided"}
+    return broker.get_prices(symbols)
 
-@app.get("/portfolio/profile")
-async def portfolio_profile() -> dict:
-    if broker.use_real:
-        balance = broker.get_balance()
-        positions = broker.get_positions()
-        STATE["positions"] = positions
-        profile = {
-            "capital": balance,
-            "open_trades": len(positions),
-            "pl_today": 0,
-            "nickname": "Trader",
-        }
-        STATE["profile"].update(profile)
-        return profile
-    return {"error": "Data unavailable"}
 
-@app.get("/portfolio/positions")
-async def portfolio_positions() -> dict:
-    if broker.use_real:
-        positions = broker.get_positions()
-        STATE["positions"] = positions
-        return positions
-    return {}
+@app.get("/positions")
+async def positions() -> Dict[str, Any]:
+    raw = broker.get_positions() or []
+    symbols = [p["symbol"] for p in raw]
+    last = broker.get_prices(symbols) if symbols else {}
 
+    out: List[Dict[str, Any]] = []
+    for p in raw:
+        s = p["symbol"]
+        qty = int(p.get("qty", 0))
+        avg = float(p.get("avg", 0.0))
+        price = last.get(s)
+        pl = (price - avg) * qty if isinstance(price, (int, float)) else None
+        out.append({"symbol": s, "qty": qty, "avg": avg, "price": price, "pl": pl})
+    return {"positions": out}
+
+
+@app.get("/profile")
+async def profile() -> Dict[str, Any]:
+    balance = broker.get_balance() or 0.0
+    pos = broker.get_positions() or []
+    set_positions({p["symbol"]: {"qty": p["qty"], "avg": p["avg"]} for p in pos})
+    pl_today = broker.get_pl_today()
+    prof = {
+        "capital": float(balance),
+        "open_trades": len(pos),
+        "pl_today": float(pl_today) if pl_today is not None else 0.0,
+        "nickname": STATE.get("profile", {}).get("nickname", "Trader"),
+    }
+    update_profile(**prof)
+    return prof
+
+
+# ===== Торговля =====
 @app.post("/trade/buy")
-async def trade_buy(req: TradeRequest) -> dict:
-    result = broker.buy(req.symbol, req.qty)
-    if result is None:
+async def trade_buy(req: TradeRequest) -> Dict[str, Any]:
+    res = broker.buy(req.symbol, req.qty)
+    if res is None:
         return {"error": "Trading unavailable"}
-    STATE["log"].append(f"BUY {req.qty} {req.symbol}")
+    append_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] order filled: BUY {req.qty} {req.symbol}")
     return {"result": True}
+
 
 @app.post("/trade/sell")
-async def trade_sell(req: TradeRequest) -> dict:
-    result = broker.sell(req.symbol, req.qty)
-    if result is None:
+async def trade_sell(req: TradeRequest) -> Dict[str, Any]:
+    res = broker.sell(req.symbol, req.qty)
+    if res is None:
         return {"error": "Trading unavailable"}
-    STATE["log"].append(f"SELL {req.qty} {req.symbol}")
+    append_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] order filled: SELL {req.qty} {req.symbol}")
     return {"result": True}
 
+
+# ===== Аналитика / GPT =====
 @app.post("/analyze")
-async def analyze(cfg: dict) -> dict:
-    """
-    Универсальный endpoint для продвинутого автотрейд-анализа:
-    - AI самостоятельно выбирает риск/индикаторы/время входа/выхода.
-    - Открывает/закрывает сделки по логике, уведомляет пользователя.
-    - Возвращает полный ежедневный отчёт и профессиональный разбор.
-    """
-    # ===== 1. Портфель и капитал =====
-    if broker.use_real:
-        capital = broker.get_balance()
-        positions = broker.get_positions()
-    else:
-        # Тестовые данные для фронта
-        capital = 10000
-        positions = {
-            "AAPL": {"qty": 15, "avg": 190.0, "value": 2950.0, "pl": 200.0},
-            "NVDA": {"qty": 8, "avg": 480.0, "value": 4100.0, "pl": 200.0},
-            "TSLA": {"qty": 5, "avg": 700.0, "value": 3450.0, "pl": -150.0}
-        }
+async def analyze(cfg: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
+    # Ровно те поля, что ждёт фронт
+    capital = cfg.get("capital")
+    risk = cfg.get("risk")
+    lev = cfg.get("lev")
+    inds: List[str] = cfg.get("inds") or []
+    model = cfg.get("llm") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    # ===== 2. Новости рынка (placeholder) =====
-    def get_market_news():
-        return [
-            {"title": "Nvidia AI chip demand hits record highs."},
-            {"title": "Fed signals rate pause through 2025."},
-            {"title": "Tesla expands gigafactory in Europe."}
-        ]
-    news = get_market_news()
-
-    # ===== 3. Генерация технических индикаторов (placeholder 25+ на каждый тикер) =====
-    import random
-    indicator_list = ['RSI', 'MACD', 'EMA', 'SMA', 'BB', 'ADX', 'OBV', 'VWAP', 'CCI', 'ATR', 'Stochastic', 'ROC',
-                      'Momentum', 'TRIX', 'Williams %R', 'MFI', 'Chande MO', 'PSAR', 'Ultimate Osc', 'Envelope', 'Donchian', 'Supertrend', 'Ichimoku', 'PPO', 'DMI']
-    def get_ai_selected_indicators():
-        selected = random.sample(indicator_list, 25)
-        return selected
-
-    ai_indicators = get_ai_selected_indicators()
-
-    def get_technicals_for_positions(positions):
-        return {
-            sym: {
-                "indicators": {ind: random.uniform(40, 70) for ind in ai_indicators[:5]},  # 5 индикаторов на тикер
-                "signal": random.choice(["entry", "hold", "exit"])
-            }
-            for sym in positions
-        }
-    technicals = get_technicals_for_positions(positions)
-
-    # ===== 4. Формирование Markdown-отчёта =====
-    # Портфель
-    positions_md = "| Symbol | Qty | Avg Price | Value | P/L ($) | P/L (%) |\n|-------|-----|-----------|-------|---------|---------|\n"
-    for sym, p in positions.items():
-        qty = p['qty']
-        avg = p['avg']
-        value = p['value']
-        pl = p['pl']
-        pl_pct = (pl / (avg * qty)) * 100 if avg and qty else 0
-        positions_md += f"| {sym} | {qty} | {avg:.2f} | {value:.2f} | {pl:.2f} | {pl_pct:.2f}% |\n"
-
-    # Индикаторы (AI summary)
-    ind_md = f"**AI Selected Indicators for Session:**\n\n" + ", ".join(ai_indicators) + "\n"
-    for sym, tech in technicals.items():
-        ind_md += f"- {sym}: " + ", ".join([f"{k}: {v:.1f}" for k, v in tech['indicators'].items()]) + f" (**AI signal:** {tech['signal'].upper()})\n"
-
-    # Сделки — симулируем открытие/закрытие (можно интегрировать с реальным трейдингом)
-    # AI сам выбирает когда открывать/закрывать (см. сигнал выше)
-    trades_md = ""
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
-    for sym, tech in technicals.items():
-        if tech["signal"] == "entry":
-            trades_md += f"- **AI signal: OPEN TRADE** for {sym} at {now} (reason: indicators alignment)\n"
-        elif tech["signal"] == "exit":
-            trades_md += f"- **AI signal: CLOSE TRADE** for {sym} at {now} (reason: risk management, TP/SL hit)\n"
-        else:
-            trades_md += f"- **AI signal: HOLD** for {sym} (no action recommended)\n"
-
-    # Прогресс анализа — имитация
-    analysis_progress = random.randint(90, 100)
-
-    # ===== 5. Собираем контекст для GPT =====
-    user_input = f"""
-# Portfolio Overview
-
-{positions_md}
-
-## Capital
-- **${capital}**
-
-## AI Risk Profile
-- Selected automatically by AI
-
-## AI-Selected Indicators (NASDAQ+)
-{', '.join(ai_indicators)}
-
----
-
-## Market News
-{chr(10).join([f"- {n['title']}" for n in news])}
-
----
-
-## Technicals & AI Trade Logic
-
-{ind_md}
-
----
-
-## AI Trade Execution
-
-{trades_md}
-
----
-
-## Analysis Progress
-
-> {analysis_progress}% complete
-
----
-
-**Report generated automatically by AI. All trades and analytics are handled autonomously — user only provides capital.**
-"""
-
-    # ===== 6. GPT professional report =====
-    summary = ask_gpt(user_input)
-    STATE["summary"] = summary
-    STATE["summary_ts"] = int(time.time())
+    user_input = (
+        f"Capital: {capital}\n"
+        f"Risk: {risk}\n"
+        f"Leverage: {lev}\n"
+        f"Indicators: {', '.join(inds) if inds else 'auto'}\n"
+        "Prepare a structured professional financial brief in Markdown.\n"
+    )
+    summary = ask_gpt(user_input=user_input, model=model, temp=0.3)
+    set_summary(summary)
     return {"summary": summary}
 
 
-@app.get("/hourly_summary")
-async def hourly_summary() -> dict:
-    if time.time() - STATE.get("summary_ts", 0) > 300:
-        STATE["summary"] = ask_gpt("Give a short market update.")
-        STATE["summary_ts"] = int(time.time())
-    return {"summary": STATE.get("summary", "")}
-
-@app.get("/telegram_status")
-async def telegram_status() -> dict:
-    status = getattr(tg, "bot", None) is not None
-    last_active = getattr(tg, "last_active", None)
-    return {"status": status, "last_active": last_active}
-
+# ===== Уведомления =====
 @app.get("/notifications")
-async def notifications() -> list[dict[str, str]]:
-    # Фильтруем только сделки (open/close/TP/SL/PnL)
-    def is_trade_event(log_line: str) -> bool:
-        return any(
-            kw in log_line.lower() 
-            for kw in ("opened", "closed", "profit", "loss", "take profit", "stop loss", "tp", "sl", "order filled", "exit", "entry")
-        )
-    # Берём только последние 20 событий по сделкам
-    events = [t for t in STATE.get("log", []) if is_trade_event(t)][-20:]
+async def notifications() -> List[Dict[str, str]]:
+    def is_trade(line: str) -> bool:
+        l = line.lower()
+        keys = ("opened", "closed", "profit", "loss",
+                "take profit", "stop loss", "tp", "sl", "order filled")
+        return any(k in l for k in keys)
+    events = [t for t in STATE.get("log", []) if is_trade(t)][-20:]
     return [{"text": t} for t in events]
-
-

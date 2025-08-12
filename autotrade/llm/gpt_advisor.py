@@ -1,56 +1,71 @@
+from __future__ import annotations
+
 import os
+from pathlib import Path
+from typing import Optional
+
+# --- .env ---
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+except Exception:
+    pass
+
+# Только пакетный импорт STATE
 from autotrade.api.state import STATE
 
+# OpenAI SDK 1.x
 try:
-    import openai
-except ImportError:
-    openai = None
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
 
-def load_prompt_template():
-    """
-    Загружает кастомный системный промпт для отчёта из файла report_prompt.txt.
-    Если файл не найден — возвращает базовый шаблон.
-    """
-    path = os.path.join(os.path.dirname(__file__), "report_prompt.txt")
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            return f.read()
-    # Фоллбек: базовый промпт
+
+def _load_prompt() -> str:
+    here = Path(__file__).resolve().parent
+    for p in (
+        here / "report_prompt.txt",
+        here.parent / "report_prompt.txt",
+        here.parent.parent / "report_prompt.txt",
+        Path.cwd() / "report_prompt.txt",
+    ):
+        if p.exists():
+            try:
+                return p.read_text(encoding="utf-8")
+            except Exception:
+                pass
     return (
-        "You are a professional financial analyst. "
-        "Prepare a structured, professional investment report for the given data. "
-        "Format all output in markdown."
-        "\n\n---\n\n"
-        "{{input}}"
+        "Write a structured professional financial brief in Markdown.\n"
+        "Be objective and concise.\n"
+        "User input:\n{{input}}\n"
     )
 
-PROMPT_TEMPLATE = load_prompt_template()
 
-# Настройка OpenAI
-if openai is not None and OPENAI_KEY:
+PROMPT = _load_prompt()
+
+
+def ask_gpt(user_input: str, model: Optional[str] = None, temp: float = 0.3) -> str:
+    if not OPENAI_KEY or OpenAI is None:
+        return STATE.get("summary") or "AI summary unavailable (OpenAI not configured)."
+
     try:
-        openai.api_key = OPENAI_KEY
+        client = OpenAI(api_key=OPENAI_KEY)
     except Exception:
-        pass
+        return STATE.get("summary") or "AI summary unavailable."
 
-def ask_gpt(user_input: str, model: str = "gpt-о3", temp: float = 0.3) -> str:
-    """
-    Вернуть профессиональный отчёт от OpenAI GPT по кастомному шаблону.
-    """
-    if openai is None or not OPENAI_KEY:
-        print("[GPT Advisor] OpenAI is not configured.")
-        return "AI summary unavailable (OpenAI not configured)."
+    final_model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    prompt = PROMPT.replace("{{input}}", user_input)
 
-    prompt = PROMPT_TEMPLATE.replace("{{input}}", user_input)
     try:
-        response = openai.chat.completions.create(
-            model=model,
+        resp = client.chat.completions.create(
+            model=final_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=temp,
         )
-        return response.choices[0].message.content.strip()
-    except Exception as exc:
-        print(f"[GPT Advisor] OpenAI error: {exc}")
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[GPT Advisor] error: {e}")
         return STATE.get("summary") or "AI summary unavailable."

@@ -1,0 +1,1 @@
+# makes 'autotrade' a package
