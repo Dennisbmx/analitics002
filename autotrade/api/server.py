@@ -78,10 +78,30 @@ async def positions() -> Dict[str, Any]:
 
     out: List[Dict[str, Any]] = []
     for p in raw:
-        s = p["symbol"]; qty = int(p.get("qty", 0)); avg = float(p.get("avg", 0.0))
+        s = p["symbol"]
+        qty = int(p.get("qty", 0))
+        avg = float(p.get("avg", 0.0))
+
         price = last.get(s)
-        pl = (price - avg) * qty if isinstance(price, (int, float)) else None
-        out.append({"symbol": s, "qty": qty, "avg": avg, "price": price, "pl": pl})
+        if isinstance(price, (int, float)):
+            pl = (price - avg) * qty
+            value = price * qty
+            pl_pct = ((price - avg) / avg * 100.0) if avg else None
+        else:
+            price = None
+            pl = None
+            value = None
+            pl_pct = None
+
+        out.append({
+            "symbol": s,
+            "qty": qty,
+            "avg": avg,
+            "price": price,
+            "value": value,
+            "pl": pl,
+            "pl_pct": pl_pct
+        })
     return {"positions": out}
 
 @app.get("/profile")

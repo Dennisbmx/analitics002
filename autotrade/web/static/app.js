@@ -61,18 +61,21 @@ async function updatePositions() {
 
     for (const p of arr) {
       const tr = document.createElement("tr");
-      const pl = p.pl;
-      const plPct = (typeof p.price === "number" && p.avg) ? ((p.price - p.avg) / p.avg) * 100 : null;
+      const val   = (typeof p.value === "number") ? p.value : (typeof p.price === "number" ? p.price * p.qty : null);
+      const pl    = (typeof p.pl === "number") ? p.pl : (typeof p.price === "number" ? (p.price - p.avg) * p.qty : null);
+      const plPct = (typeof p.pl_pct === "number") ? p.pl_pct :
+                    (typeof p.price === "number" && p.avg ? ((p.price - p.avg) / p.avg) * 100 : null);
       tr.innerHTML = `
         <td class="pl-2">${p.symbol}</td>
         <td class="text-right pr-2">${p.qty}</td>
         <td class="text-right pr-2">${fmtNum(p.avg)}</td>
-        <td class="text-right pr-2">${typeof p.price === "number" ? fmtNum(p.price) : "—"}</td>
-        <td class="text-right pr-2 ${pl > 0 ? "text-green-400" : pl < 0 ? "text-red-400" : ""}">${fmtNum(pl)}</td>
+        <td class="text-right pr-2">${val === null ? "—" : fmtNum(val)}</td>
+        <td class="text-right pr-2 ${pl > 0 ? "text-green-400" : pl < 0 ? "text-red-400" : ""}">${pl === null ? "—" : fmtNum(pl)}</td>
         <td class="text-right pr-2 ${plPct > 0 ? "text-green-400" : plPct < 0 ? "text-red-400" : ""}">${plPct === null ? "—" : fmtNum(plPct)}</td>
       `;
       table.appendChild(tr);
     }
+    
   } catch {
     // ignore
   }
