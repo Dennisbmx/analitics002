@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-# --- .env: из рабочей папки (VS Code) и из корня репо ---
+# --- .env из рабочей папки (VS Code) и из корня репо ---
 try:
     from dotenv import load_dotenv, find_dotenv
     load_dotenv(find_dotenv(usecwd=True), override=False)                       # .env из CWD
@@ -19,39 +19,55 @@ try:
 except Exception:
     pass
 
-# --- Пакетные импорты проекта ---
+# --- проектные импорты ---
 from autotrade.api.state import (
     STATE, append_log, set_positions, update_profile, set_summary
 )
 from autotrade.broker.alpaca import AlpacaBroker
 from autotrade.llm.gpt_advisor import ask_gpt
 
-# --- Пути строго под структуру проекта ---
+# --- пути строго под структуру проекта ---
 AUTOTRADE_DIR = Path(__file__).resolve().parents[1]   # .../autotrade
 WEB_ROOT = AUTOTRADE_DIR / "web"                      # .../autotrade/web
 TEMPLATES_DIR = WEB_ROOT / "templates"                # .../autotrade/web/templates
 
 app = FastAPI()
-
-# /static -> autotrade/web (здесь app.js, app.css, icons/)
 app.mount("/static", StaticFiles(directory=str(WEB_ROOT)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 broker = AlpacaBroker()
 
-
-# ===== Модели =====
+# ===== Pydantic модели =====
 class TradeRequest(BaseModel):
     symbol: str
     qty: int
 
-
 # ===== Страницы =====
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    # Ожидаем dashboard.html в autotrade/web/templates/
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
+# Диагностика путей (удобно, можно оставить)
+@app.get("/debug/webroot", response_class=PlainTextResponse)
+async def debug_webroot():
+    lines = [
+        f"WEB_ROOT = {WEB_ROOT}",
+        f"TEMPLATES_DIR = {TEMPLATES_DIR}",
+        f"dashboard.html exists = {(TEMPLATES_DIR / 'dashboard.html').exists()}",
+        f"app.js exists = {(WEB_ROOT / 'app.js').exists()}",
+        f"app.css exists = {(WEB_ROOT / 'app.css').exists()}",
+        f"icons/ exists = {(WEB_ROOT / 'icons').exists()}",
+    ]
+    try:
+        lines += ["\nWEB_ROOT listing:"] + [f"- {p.name}" for p in sorted(WEB_ROOT.iterdir())]
+    except Exception as e:
+        lines.append(f"<err list web: {e}>")
+    if (WEB_ROOT / "templates").exists():
+        try:
+            lines += ["\nWEB_ROOT/templates listing:"] + [f"- {p.name}" for p in sorted((WEB_ROOT / "templates").iterdir())]
+        except Exception as e:
+            lines.append(f"<err list tpl: {e}>")
+    return "\n".join(lines)
 
 # ===== Маркет-данные =====
 @app.get("/prices")
@@ -60,7 +76,6 @@ async def prices(syms: str) -> Dict[str, Optional[float]]:
     if not symbols:
         return {"error": "No symbols provided"}
     return broker.get_prices(symbols)
-
 
 @app.get("/positions")
 async def positions() -> Dict[str, Any]:
@@ -78,7 +93,6 @@ async def positions() -> Dict[str, Any]:
         out.append({"symbol": s, "qty": qty, "avg": avg, "price": price, "pl": pl})
     return {"positions": out}
 
-
 @app.get("/profile")
 async def profile() -> Dict[str, Any]:
     balance = broker.get_balance() or 0.0
@@ -94,7 +108,6 @@ async def profile() -> Dict[str, Any]:
     update_profile(**prof)
     return prof
 
-
 # ===== Торговля =====
 @app.post("/trade/buy")
 async def trade_buy(req: TradeRequest) -> Dict[str, Any]:
@@ -104,7 +117,6 @@ async def trade_buy(req: TradeRequest) -> Dict[str, Any]:
     append_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] order filled: BUY {req.qty} {req.symbol}")
     return {"result": True}
 
-
 @app.post("/trade/sell")
 async def trade_sell(req: TradeRequest) -> Dict[str, Any]:
     res = broker.sell(req.symbol, req.qty)
@@ -113,11 +125,9 @@ async def trade_sell(req: TradeRequest) -> Dict[str, Any]:
     append_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] order filled: SELL {req.qty} {req.symbol}")
     return {"result": True}
 
-
 # ===== Аналитика / GPT =====
 @app.post("/analyze")
 async def analyze(cfg: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
-    # Ровно те поля, что ждёт фронт
     capital = cfg.get("capital")
     risk = cfg.get("risk")
     lev = cfg.get("lev")
@@ -134,7 +144,6 @@ async def analyze(cfg: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
     summary = ask_gpt(user_input=user_input, model=model, temp=0.3)
     set_summary(summary)
     return {"summary": summary}
-
 
 # ===== Уведомления =====
 @app.get("/notifications")

@@ -1,29 +1,16 @@
+from __future__ import annotations
+
 import os
-import threading
 from pathlib import Path
 
-import uvicorn
-from dotenv import load_dotenv
-
-from autotrade.api import server
-from autotrade.telegram.bot import run_bot
-
-
-def main() -> None:
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    load_dotenv(env_path)
-
-    enable_telegram = os.getenv("ENABLE_TELEGRAM", "true").lower() == "true"
-    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
-    if enable_telegram and telegram_token:
-        threading.Thread(target=run_bot, daemon=True).start()
-        print("Telegram bot started")
-    else:
-        print("Telegram disabled or no token provided.")
-
-    uvicorn.run(server.app, host="0.0.0.0", port=8000)
-
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+except Exception:
+    pass
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("autotrade.api.server:app", host="0.0.0.0", port=port, reload=True)

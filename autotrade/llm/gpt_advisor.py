@@ -12,7 +12,6 @@ try:
 except Exception:
     pass
 
-# Только пакетный импорт STATE
 from autotrade.api.state import STATE
 
 # OpenAI SDK 1.x

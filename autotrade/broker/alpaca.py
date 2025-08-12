@@ -105,11 +105,11 @@ class AlpacaBroker:
         if not symbols:
             return {}
 
-        # Используем простой фолбэк на Twelve Data (чтобы не тащить отдельный модуль market data Alpaca)
+        # Простой фолбэк на Twelve Data (без зависимостей MD Alpaca)
         if TWELVE_DATA_KEY:
             return self._prices_via_twelve_data(symbols)
 
-        # Если ключа Twelve Data нет — UI покажет N/A
+        # Если нет ключа — UI покажет N/A (None)
         return {s: None for s in symbols}
 
     def _prices_via_twelve_data(self, symbols: List[str]) -> Dict[str, Optional[float]]:
