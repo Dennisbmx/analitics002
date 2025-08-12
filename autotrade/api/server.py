@@ -11,65 +11,58 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-# --- .env из рабочей папки (VS Code) и из корня репо ---
+# ---- .env из CWD (VS Code) и из корня репо ----
 try:
     from dotenv import load_dotenv, find_dotenv
-    load_dotenv(find_dotenv(usecwd=True), override=False)                       # .env из CWD
-    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)   # .env из корня репо
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 except Exception:
     pass
 
-# --- проектные импорты ---
+# ---- проектные импорты ----
 from autotrade.api.state import (
     STATE, append_log, set_positions, update_profile, set_summary
 )
 from autotrade.broker.alpaca import AlpacaBroker
 from autotrade.llm.gpt_advisor import ask_gpt
 
-# --- пути строго под структуру проекта ---
-AUTOTRADE_DIR = Path(__file__).resolve().parents[1]   # .../autotrade
-WEB_ROOT = AUTOTRADE_DIR / "web"                      # .../autotrade/web
-TEMPLATES_DIR = WEB_ROOT / "templates"                # .../autotrade/web/templates
+# ---- жёсткие пути под структуру репо ----
+AUTOTRADE_DIR = Path(__file__).resolve().parents[1]        # .../autotrade
+WEB_DIR       = AUTOTRADE_DIR / "web"                      # .../autotrade/web
+STATIC_DIR    = WEB_DIR / "static"                         # .../autotrade/web/static
+TEMPLATES_DIR = WEB_DIR / "templates"                      # .../autotrade/web/templates
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=str(WEB_ROOT)), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 broker = AlpacaBroker()
 
-# ===== Pydantic модели =====
+# -------- models --------
 class TradeRequest(BaseModel):
     symbol: str
     qty: int
 
-# ===== Страницы =====
+# -------- pages --------
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
-# Диагностика путей (удобно, можно оставить)
+# диагностика путей (на всякий случай)
 @app.get("/debug/webroot", response_class=PlainTextResponse)
 async def debug_webroot():
     lines = [
-        f"WEB_ROOT = {WEB_ROOT}",
+        f"WEB_DIR       = {WEB_DIR}",
+        f"STATIC_DIR    = {STATIC_DIR}",
         f"TEMPLATES_DIR = {TEMPLATES_DIR}",
         f"dashboard.html exists = {(TEMPLATES_DIR / 'dashboard.html').exists()}",
-        f"app.js exists = {(WEB_ROOT / 'app.js').exists()}",
-        f"app.css exists = {(WEB_ROOT / 'app.css').exists()}",
-        f"icons/ exists = {(WEB_ROOT / 'icons').exists()}",
+        f"app.js exists         = {(STATIC_DIR / 'app.js').exists()}",
+        f"app.css exists        = {(STATIC_DIR / 'app.css').exists()}",
+        f"icons/ exists         = {(STATIC_DIR / 'icons').exists()}",
     ]
-    try:
-        lines += ["\nWEB_ROOT listing:"] + [f"- {p.name}" for p in sorted(WEB_ROOT.iterdir())]
-    except Exception as e:
-        lines.append(f"<err list web: {e}>")
-    if (WEB_ROOT / "templates").exists():
-        try:
-            lines += ["\nWEB_ROOT/templates listing:"] + [f"- {p.name}" for p in sorted((WEB_ROOT / "templates").iterdir())]
-        except Exception as e:
-            lines.append(f"<err list tpl: {e}>")
     return "\n".join(lines)
 
-# ===== Маркет-данные =====
+# -------- market --------
 @app.get("/prices")
 async def prices(syms: str) -> Dict[str, Optional[float]]:
     symbols = [s.strip().upper() for s in syms.split(",") if s.strip()]
@@ -85,9 +78,7 @@ async def positions() -> Dict[str, Any]:
 
     out: List[Dict[str, Any]] = []
     for p in raw:
-        s = p["symbol"]
-        qty = int(p.get("qty", 0))
-        avg = float(p.get("avg", 0.0))
+        s = p["symbol"]; qty = int(p.get("qty", 0)); avg = float(p.get("avg", 0.0))
         price = last.get(s)
         pl = (price - avg) * qty if isinstance(price, (int, float)) else None
         out.append({"symbol": s, "qty": qty, "avg": avg, "price": price, "pl": pl})
@@ -108,7 +99,7 @@ async def profile() -> Dict[str, Any]:
     update_profile(**prof)
     return prof
 
-# ===== Торговля =====
+# -------- trading --------
 @app.post("/trade/buy")
 async def trade_buy(req: TradeRequest) -> Dict[str, Any]:
     res = broker.buy(req.symbol, req.qty)
@@ -125,19 +116,15 @@ async def trade_sell(req: TradeRequest) -> Dict[str, Any]:
     append_log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] order filled: SELL {req.qty} {req.symbol}")
     return {"result": True}
 
-# ===== Аналитика / GPT =====
+# -------- analyze / GPT --------
 @app.post("/analyze")
 async def analyze(cfg: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
-    capital = cfg.get("capital")
-    risk = cfg.get("risk")
-    lev = cfg.get("lev")
+    capital = cfg.get("capital"); risk = cfg.get("risk"); lev = cfg.get("lev")
     inds: List[str] = cfg.get("inds") or []
     model = cfg.get("llm") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     user_input = (
-        f"Capital: {capital}\n"
-        f"Risk: {risk}\n"
-        f"Leverage: {lev}\n"
+        f"Capital: {capital}\nRisk: {risk}\nLeverage: {lev}\n"
         f"Indicators: {', '.join(inds) if inds else 'auto'}\n"
         "Prepare a structured professional financial brief in Markdown.\n"
     )
@@ -145,13 +132,12 @@ async def analyze(cfg: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
     set_summary(summary)
     return {"summary": summary}
 
-# ===== Уведомления =====
+# -------- notifications --------
 @app.get("/notifications")
 async def notifications() -> List[Dict[str, str]]:
     def is_trade(line: str) -> bool:
         l = line.lower()
-        keys = ("opened", "closed", "profit", "loss",
-                "take profit", "stop loss", "tp", "sl", "order filled")
+        keys = ("opened","closed","profit","loss","take profit","stop loss","tp","sl","order filled","entry","exit")
         return any(k in l for k in keys)
     events = [t for t in STATE.get("log", []) if is_trade(t)][-20:]
     return [{"text": t} for t in events]
